@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Административные документы (root collection "admin") ----------
+    match /admin/{docId} {
+      allow read, write: if request.auth != null
+                         && request.auth.token.role == 1;   // только администратор
+    }
+
+    // --- 1. Пользователи -----------------------------------------------
+    // Каждый видит и изменяет только СВОЁ поддерево /users/{uid}/...
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+    }
+
+    // --- 2. Публичные системные данные ----------------------------------
+    // Настройки, которые должны читаться всеми (тема, валюты, лимиты и т.-д.)
+    match /system-settings/{docId} {
+      // читать могут все (даже неавторизованные, уберите "|| true" если нужно авторизовать)
+      allow read: if request.auth != null || true;
+      // изменять может ТОЛЬКО администратор (custom claim role == 1)
+      allow write: if request.auth != null
+                   && request.auth.token.role == 1;
+    }
+
+    // --- 3. Платёжная конфигурация --------------------------------------
+    match /payment-config/{docId} {
+      allow read, write: if request.auth != null
+                         && request.auth.token.role == 1;   // только админ
+    }
+
+    // --- 4. Гаражи и вложенные коллекции --------------------------------
+    match /garages/{garageId} {
+
+      function isMember() {
+        return request.auth.uid in resource.data.memberIds;
+      }
+      function isOwner() {
+        return request.auth.uid == resource.data.ownerId;
+      }
+
+      // читать может владелец или член гаража
+      allow read: if request.auth != null && (isOwner() || isMember());
+
+      // изменять — только владелец (или админ)
+      allow write: if request.auth != null
+                   && (isOwner() || request.auth.token.role == 1);
+
+      // ---- cars суб-коллекция ----
+      match /cars/{carId} {
+        allow read:  if request.auth != null && (isOwner() || isMember());
+        allow write: if request.auth != null
+                     && (isOwner() || request.auth.token.role == 1);
+      }
+
+      // ---- expenses суб-коллекция ----
+      match /expenses/{expenseId} {
+        allow read:  if request.auth != null && (isOwner() || isMember());
+        allow write: if request.auth != null
+                     && (isOwner() || request.auth.token.role == 1);
+      }
+    }
+
+    // --- 5. Приглашения --------------------------------------------------
+    match /invitations/{invId} {
+      allow read, write: if request.auth != null
+                         && (request.auth.uid == resource.data.senderId
+                             || request.auth.uid == resource.data.receiverId
+                             || request.auth.token.role == 1);
+    }
+
+    // --- 6. Подписки -----------------------------------------------------
+    match /subscriptions/{uid} {
+      allow read, write: if request.auth != null
+                         && (request.auth.uid == uid
+                             || request.auth.token.role == 1);
+    }
+  }
+}
